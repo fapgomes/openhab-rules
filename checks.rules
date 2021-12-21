@@ -1,0 +1,109 @@
+var Timer timer = null
+
+// you need to substitute myemail@email.com to your current regiter email in openhabcloud
+// in items, you only need put in group gCheckProblems or gCheckProblemsNonCritical 
+rule "Check Last Update timestamp"
+when
+	    //          sec min hr  dom mon dow yr
+        Time cron   "1  *  7-23   ?   *   *"
+then
+	gCheckProblems.members.forEach[item |
+		var lastupdate = item.lastUpdate("influxdb");
+
+		// force to null
+		//itemProblem.postUpdate(NULL);
+		// debug
+		//logInfo("checks.rules", "UPDATING: Item: " + item + " lastupdate: " + lastupdate.toString());
+		if (lastupdate !== null) {
+			if (now.isAfter( lastupdate.plusMinutes(120) )) {
+				logInfo("checks.rules", "NOT UPDATING: Item: " + item + " lastupdate: " + lastupdate.toString() + " item with problem: " + itemProblem.state +" notification sent: " + notificationSend.state);
+				itemProblem.postUpdate(item.name.toString());
+				notificationSend.postUpdate(ON)
+				if 	(notificationSend.state == OFF) {
+					sendNotification("myemail@email.com", "Item: " + item.name.toString() + " not updating.")
+				} else if (timer === null) {
+					logInfo("checks.rules", "Creating timer, to supress notifications for 10 minutes");
+					timer = createTimer(now.plusMinutes(60)) [|
+						notificationSend.postUpdate(OFF)
+						timer = null
+					]
+				}
+			} else if (itemProblem.state == item.name && !itemProblem.changedSince(now.minusMinutes(2))) {
+				/* tudo ok */
+				itemProblem.postUpdate(NULL);
+				//logInfo("checks.rules", "OK: Item: " + item + " lastupdate: " + lastupdate.toString() + " less that 2 minutes: " + now.minusMinutes(2));
+			} else {
+				// debug
+				//logInfo("checks.rules", "UPDATING: Item: " + item + " lastupdate: " + lastupdate.toString());
+			}
+		} else {
+			logInfo("checks.rules", "NULL: Item: " + item);
+			itemProblem.postUpdate(item.name.toString());
+			sendNotification("myemail@email.com", "Item: " + item.name.toString() + " not updating.")
+		}
+	]
+end
+
+rule "Check Last Update timestamp for non critical items"
+when
+	    //          sec min hr  dom mon dow yr
+        Time cron   "0  1  */4   ?   *   *"
+then
+	gCheckProblemsNonCritical.members.forEach[item |
+		var lastupdate = item.lastUpdate("influxdb");
+		if (lastupdate !== null) {
+			if (now.isAfter( lastupdate.plusHours(18) )) {
+				logInfo("checks.rules", "NOT UPDATING: Item: " + item + " lastupdate: " + lastupdate.toString());
+				itemProblem.postUpdate(item.name.toString());
+				notificationSend.postUpdate(ON)
+				if 	(notificationSend.state == OFF) {
+					sendNotification("myemail@email.com", "Item: " + item.name.toString() + " not updating.")
+				} else if (timer === null) {
+					logInfo("checks.rules", "Creating timer, to supress notifications for 10 minutes");
+					timer = createTimer(now.plusMinutes(60)) [|
+						notificationSend.postUpdate(OFF)
+						timer = null
+					]
+				}
+			/* como apenas corre 4 em 4 horas, temos que remover o item apenas se ja tiverem passado 5 */
+			} else if (!itemProblem.changedSince(now.minusHours(5))) {
+				/* tudo ok */
+				itemProblem.postUpdate(NULL);
+			}
+		} else {
+			logInfo("checks.rules", "NULL: Item: " + item);
+			itemProblem.postUpdate(item.name.toString());
+		}
+	]
+end
+
+rule "Check network online"
+when
+	Member of gCheckProblemsNetwork changed
+then
+	val item = gNetDevices.members.sortBy[lastUpdate].last
+	if (item.state == OFF) {
+		logInfo("checks.rules", "NOT UPDATING: Item: " + item + " enviada notificação: " + notificationSend.state);
+		itemProblem.postUpdate(item.name.toString());
+		notificationSend.postUpdate(ON)
+		if 	(notificationSend.state == OFF) {
+			sendNotification("myemail@email.com", "Item: " + item.name.toString() + " not updating.")
+		} else if (timer === null) {
+			logInfo("checks.rules", "Creating timer, to supress notifications for 10 minutes");
+			timer = createTimer(now.plusMinutes(60)) [|
+				notificationSend.postUpdate(OFF)
+				timer = null
+			]
+		}
+	} else if (item.state == ON) {
+		itemProblem.postUpdate(NULL);
+	}
+end
+
+rule "Check network online"
+when
+	Channel GP1_SmartPlugCamaras_state triggered START or
+	Item GP1_SmartPlugCamaras_state changed 
+then
+	GP1_SmartPlugCamaras_state.sendCommand(ON)
+end
